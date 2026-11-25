@@ -1,67 +1,3 @@
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
-import streamlit as st
-from sklearn.model_selection import train_test_split
-from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
-from sklearn.pipeline import Pipeline
-from sklearn.dummy import DummyClassifier
-from sklearn.linear_model import LogisticRegression
-from sklearn.svm import SVC
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
-
-REGIONS = ["NA_Sales", "EU_Sales", "JP_Sales", "Other_Sales"]
-CATEGORIES = ["Platform", "Genre", "Publisher"]
-FEATURES = CATEGORIES + ["Year"]
-
-st.set_page_config(page_title="Video Game Sales", layout="wide")
-
-
-@st.cache_data
-def load_data():
-    """Load and clean the data (same steps as the notebook)."""
-    df = pd.read_csv("vgsales.csv")
-    for col in ["Name", "Platform", "Genre", "Publisher"]:
-        df[col] = df[col].str.strip()
-    df["Year"] = pd.to_numeric(df["Year"], errors="coerce")
-    df = df.drop_duplicates(subset=["Name", "Platform", "Year"])
-    df = df.dropna(subset=["Year"])
-    df["Publisher"] = df["Publisher"].fillna("Unknown")
-    df = df[df["Year"] <= 2016].copy()
-    df["Year"] = df["Year"].astype(int)
-    return df.drop(columns="Rank").reset_index(drop=True)
-
-
-@st.cache_resource
-def train_models(df):
-    """Train an SVM hit classifier and a majority-class baseline."""
-    X = df[FEATURES]
-    y = (df["Global_Sales"] >= 1).astype(int)
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
-    )
-
-    models = {
-        "Baseline": DummyClassifier(strategy="most_frequent"),
-        "SVM (RBF)": SVC(
-            kernel="rbf",
-            C=1.0,
-            class_weight="balanced",
-            probability=True,
-            random_state=42
-        ),
-    }
-
-    fitted, rows = {}, []
-    for name, model in models.items():
-        encode = ColumnTransformer(
-            transformers=[
-                ("cat", OneHotEncoder(
-                    handle_unknown="infrequent_if_exist",
-                    min_frequency=20
-                ), CATEGORIES),
-                ("year", StandardScaler(), ["Year"]),
             ]
         )
         pipe = Pipeline([
@@ -143,15 +79,15 @@ with predict_tab:
     model, model_name, results = train_models(df)
     next_year = 2027
     with st.form("predict"):
-        platform = st.text_input(
-            "Platform (use a known value or enter a planned/new platform)",
-            value=sorted(df["Platform"].unique())[0]
-        ).strip()
-        game_genre = st.selectbox("Genre", sorted(df["Genre"].dropna().unique()))
-        publisher = st.text_input(
-            "Publisher (use a known value or enter a planned/new publisher)",
-            value="Unknown"
-        ).strip() or "Unknown"
+        # Dropdown choices are populated from the cleaned dataset.
+        platform_options = sorted(df["Platform"].dropna().astype(str).unique())
+        publisher_options = sorted(df["Publisher"].dropna().astype(str).unique())
+
+        platform = st.selectbox("Platform", platform_options)
+        game_genre = st.selectbox(
+            "Genre", sorted(df["Genre"].dropna().astype(str).unique())
+        )
+        publisher = st.selectbox("Publisher", publisher_options)
         year = st.number_input(
             "Planned release year",
             min_value=2017,
