@@ -18,7 +18,8 @@ from sklearn.metrics import (
 
 REGIONS = ["NA_Sales", "EU_Sales", "JP_Sales", "Other_Sales"]
 CATEGORIES = ["Platform", "Genre", "Publisher"]
-FEATURES = CATEGORIES + ["Year"]
+MODEL_CATEGORIES = ["Genre", "Publisher"]  # Platform is not a model input
+FEATURES = MODEL_CATEGORIES + ["Year"]
 
 st.set_page_config(page_title="Video Game Sales", layout="wide")
 
@@ -68,7 +69,7 @@ def train_models(_df):
                         handle_unknown="infrequent_if_exist",
                         min_frequency=20,
                     ),
-                    CATEGORIES,
+                    MODEL_CATEGORIES,
                 ),
                 ("year", StandardScaler(), ["Year"]),
             ]
@@ -156,24 +157,23 @@ with tab2:
     st.dataframe(results, use_container_width=True)
 
     st.subheader("Predict a hit")
-    c1, c2, c3, c4 = st.columns(4)
-    platform = c1.selectbox("Platform", sorted(df["Platform"].unique()))
-    genre = c2.selectbox("Genre ", sorted(df["Genre"].unique()))
-    publisher = c3.selectbox("Publisher", sorted(df["Publisher"].unique()))
-    year = c4.slider("Release year", year_min, 2030, 2017)
+    c1, c2, c3 = st.columns(3)
+    genre = c1.selectbox("Genre ", sorted(df["Genre"].unique()))
+    publisher = c2.selectbox("Publisher", sorted(df["Publisher"].unique()))
+    year = c3.slider("Release year", 2017, 2040, 2017)
 
     if st.button("Predict"):
         row = pd.DataFrame(
-            [{"Platform": platform, "Genre": genre, "Publisher": publisher, "Year": year}]
+            [{"Genre": genre, "Publisher": publisher, "Year": year}]
         )
         prob = model.predict_proba(row)[0, 1]
         st.metric("Probability of selling 1M+ copies", f"{prob:.1%}")
-        if year > year_max:
-            st.caption(
-                f"The training data ends in {year_max}, so a {year} release is an "
-                "extrapolation. Treat this as a rough guide, not a forecast."
-            )
+        st.caption(
+            f"The training data ends in {year_max}, so a {year} release is an "
+            "extrapolation. Treat this as a rough guide, not a forecast."
+        )
 
 with tab3:
     st.write(f"{len(df):,} games after cleaning")
     st.dataframe(df, use_container_width=True)
+    
