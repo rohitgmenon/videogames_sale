@@ -4,11 +4,11 @@ import seaborn as sns
 import streamlit as st
 from sklearn.model_selection import train_test_split
 from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import OneHotEncoder
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.pipeline import Pipeline
 from sklearn.dummy import DummyClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import SVC
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 
 REGIONS = ["NA_Sales", "EU_Sales", "JP_Sales", "Other_Sales"]
@@ -35,36 +35,54 @@ def load_data():
 
 @st.cache_resource
 def train_models(df):
-    """Train the models and return the best one with a score table."""
+    """Train an SVM hit classifier and a majority-class baseline."""
     X = df[FEATURES]
     y = (df["Global_Sales"] >= 1).astype(int)
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y)
+        X, y, test_size=0.2, random_state=42, stratify=y
+    )
 
     models = {
         "Baseline": DummyClassifier(strategy="most_frequent"),
-        "Logistic Regression": LogisticRegression(max_iter=5000, class_weight="balanced"),
-        "Random Forest": RandomForestClassifier(n_estimators=200, min_samples_leaf=5,
-                                                class_weight="balanced", random_state=42),
+        "SVM (RBF)": SVC(
+            kernel="rbf",
+            C=1.0,
+            class_weight="balanced",
+            probability=True,
+            random_state=42
+        ),
     }
+
     fitted, rows = {}, []
     for name, model in models.items():
         encode = ColumnTransformer(
-            [("cat", OneHotEncoder(handle_unknown="infrequent_if_exist", min_frequency=20), CATEGORIES)],
-            remainder="passthrough")
-        pipe = Pipeline([("encode", encode), ("model", model)]).fit(X_train, y_train)
+            transformers=[
+                ("cat", OneHotEncoder(
+                    handle_unknown="infrequent_if_exist",
+                    min_frequency=20
+                ), CATEGORIES),
+                ("year", StandardScaler(), ["Year"]),
+            ]
+        )
+        pipe = Pipeline([
+            ("encode", encode),
+            ("model", model),
+        ]).fit(X_train, y_train)
+
         pred = pipe.predict(X_test)
         score = pipe.predict_proba(X_test)[:, 1]
         fitted[name] = pipe
-        rows.append({"Model": name,
-                     "Accuracy": accuracy_score(y_test, pred),
-                     "Precision": precision_score(y_test, pred, zero_division=0),
-                     "Recall": recall_score(y_test, pred),
-                     "F1": f1_score(y_test, pred),
-                     "ROC-AUC": roc_auc_score(y_test, score)})
+        rows.append({
+            "Model": name,
+            "Accuracy": accuracy_score(y_test, pred),
+            "Precision": precision_score(y_test, pred, zero_division=0),
+            "Recall": recall_score(y_test, pred, zero_division=0),
+            "F1": f1_score(y_test, pred, zero_division=0),
+            "ROC-AUC": roc_auc_score(y_test, score),
+        })
+
     results = pd.DataFrame(rows).set_index("Model").round(3)
-    best_name = results.drop("Baseline")["ROC-AUC"].idxmax()
-    return fitted[best_name], best_name, results
+    return fitted["SVM (RBF)"], "SVM (RBF)", results
 
 
 def bar_chart(data, column, title):
@@ -111,20 +129,59 @@ with chart_tab:
 
 with predict_tab:
     st.write("A **hit** is a game with at least 1 million global sales.")
+    st.info(
+        "This SVM estimates whether a game could become a hit from its planned "
+        "platform, genre, publisher, and release year. It does not use the game's "
+        "sales as an input."
+    )
+    st.warning(
+        "The training data ends in 2016. Predictions for future years are "
+        "extrapolations from older games and may be unreliable, especially for "
+        "new platforms or publishers."
+    )
+
     model, model_name, results = train_models(df)
+    next_year = 2027
     with st.form("predict"):
-        platform = st.selectbox("Platform", sorted(df["Platform"].unique()))
-        game_genre = st.selectbox("Genre", sorted(df["Genre"].unique()))
-        publisher = st.selectbox("Publisher", sorted(df["Publisher"].unique()))
-        year = st.slider("Release year", int(df["Year"].min()), 2016, 2015)
-        submitted = st.form_submit_button("Predict")
+        platform = st.text_input(
+            "Platform (use a known value or enter a planned/new platform)",
+            value=sorted(df["Platform"].unique())[0]
+        ).strip()
+        game_genre = st.selectbox("Genre", sorted(df["Genre"].dropna().unique()))
+        publisher = st.text_input(
+            "Publisher (use a known value or enter a planned/new publisher)",
+            value="Unknown"
+        ).strip() or "Unknown"
+        year = st.number_input(
+            "Planned release year",
+            min_value=2017,
+            max_value=2040,
+            value=next_year,
+            step=1
+        )
+        submitted = st.form_submit_button("Estimate hit potential")
+
     if submitted:
-        game = pd.DataFrame([[platform, game_genre, publisher, year]], columns=FEATURES)
+        game = pd.DataFrame(
+            [[platform or "Unknown", game_genre, publisher, int(year)]],
+            columns=FEATURES
+        )
         score = model.predict_proba(game)[0, 1]
-        if score >= 0.5:
-            st.success(f"Likely a HIT (hit score {score:.2f})")
+        predicted_class = int(score >= 0.5)
+        if predicted_class:
+            st.success(f"Estimated hit potential: HIGH (SVM score {score:.2f})")
         else:
-            st.warning(f"Probably not a hit (hit score {score:.2f})")
-        st.caption("The hit score is not an exact probability.")
-    st.subheader(f"Model comparison (using: {model_name})")
+            st.warning(f"Estimated hit potential: LOW (SVM score {score:.2f})")
+        st.caption(
+            "The score is the SVM's probability estimate, not a calibrated guarantee "
+            "that the game will sell 1 million copies. Validate it on newer data "
+            "before relying on future-year predictions."
+        )
+
+    st.subheader("SVM vs majority-class baseline")
     st.dataframe(results)
+    st.caption(
+        "Compare F1, Recall, and ROC-AUC as well as Accuracy. The baseline always "
+        "predicts the most common class; a high baseline accuracy can hide poor "
+        "hit detection."
+    )
