@@ -160,7 +160,7 @@ with tab2:
     platform = c1.selectbox("Platform", sorted(df["Platform"].unique()))
     genre = c2.selectbox("Genre ", sorted(df["Genre"].unique()))
     publisher = c3.selectbox("Publisher", sorted(df["Publisher"].unique()))
-    year = c4.slider("Year", year_min, year_max, min(2010, year_max))
+    year = c4.slider("Release year", year_min, 2030, 2017)
 
     if st.button("Predict"):
         row = pd.DataFrame(
@@ -168,6 +168,11 @@ with tab2:
         )
         prob = model.predict_proba(row)[0, 1]
         st.metric("Probability of selling 1M+ copies", f"{prob:.1%}")
+        if year > year_max:
+            st.caption(
+                f"The training data ends in {year_max}, so a {year} release is an "
+                "extrapolation. Treat this as a rough guide, not a forecast."
+            )
 
 with tab3:
     st.write(f"{len(df):,} games after cleaning")
